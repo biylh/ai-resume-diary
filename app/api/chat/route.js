@@ -40,10 +40,10 @@ export async function POST(req) {
 参与冰箱供应链轮岗，跟进冷藏室门板冲压工序。针对试制中板材良率偏低问题，主动排查定位销磨损瓶颈，协同车间技术员提出改用耐磨合金定位销的改进方案，使板材成型良率由 92% 提升至 98%，有效保障了新产品试制节点。
 [/STAR_RESUME]`;
 
-    // We will use gemini-1.5-flash as the highly performant and stable model.
+    // We will use gemini-2.5-flash as the highly performant and stable model.
     // Standard practice for system instructions is to pass them inside getGenerativeModel config.
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash",
       systemInstruction: systemInstruction
     });
 
