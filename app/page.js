@@ -195,6 +195,9 @@ export default function HomePage() {
       content: item.content
     }));
 
+    const isGuest = user && (user.id.startsWith("guest-") || user.email === "guest@example.com" || !user.email);
+    const hasCustomKey = customApiKey && customApiKey.trim() !== "";
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -213,7 +216,10 @@ export default function HomePage() {
 
       if (!res.ok) {
         const errData = await res.json();
-        throw new Error(errData.error || "请求 AI 接口失败");
+        if (errData.error === "LIMIT_REACHED") {
+          setUser(prev => ({ ...prev, chat_count: 3 }));
+        }
+        throw new Error(errData.message || errData.error || "请求 AI 接口失败");
       }
 
       // Read stream
@@ -245,6 +251,14 @@ export default function HomePage() {
             setCurrentRefinedBullet(bullet);
           }
         }
+      }
+
+      // Update chat count locally for guest after successful stream completion
+      if (isGuest && !hasCustomKey) {
+        setUser(prev => ({
+          ...prev,
+          chat_count: (prev?.chat_count || 0) + 1
+        }));
       }
 
     } catch (err) {
@@ -442,6 +456,12 @@ export default function HomePage() {
     }
   };
 
+  const isGuest = user && (user.id.startsWith("guest-") || user.email === "guest@example.com" || !user.email);
+  const hasCustomKey = customApiKey && customApiKey.trim() !== "";
+  
+  const isLimitReached = isGuest && !hasCustomKey && (user?.chat_count || 0) >= 3;
+  const isBindKeyRequired = user && !isGuest && !hasCustomKey;
+
   if (loadingSession) {
     return (
       <div style={styles.loadingContainer}>
@@ -577,41 +597,74 @@ export default function HomePage() {
                 </div>
 
                 {/* Input area */}
-                <form onSubmit={handleSendMessage} style={styles.chatInputForm}>
-                  <div style={styles.chatInputWrapper}>
-                    <textarea
-                      value={chatMessage}
-                      onChange={(e) => setChatMessage(e.target.value)}
-                      placeholder="输入一句话日报，例如：今天完成了商用冰箱制冷芯片测试，解决了高低温漂移的问题..."
-                      rows={1}
-                      disabled={isGenerating}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSendMessage(e);
-                        }
-                      }}
-                      style={styles.chatTextarea}
-                    />
-                    <button 
-                      type="submit" 
-                      disabled={isGenerating || !chatMessage.trim()} 
-                      style={chatMessage.trim() ? styles.btnSendActive : styles.btnSendDisabled}
-                    >
-                      <Send size={15} />
-                    </button>
+                {isLimitReached ? (
+                  <div style={styles.limitBanner}>
+                    <p style={styles.limitText}>⚠️ 您已达到访客模式使用内置 API 密钥的 3 次提问限制。</p>
+                    <div style={styles.limitButtons}>
+                      <button 
+                        type="button" 
+                        onClick={() => setActivePane("settings-pane")} 
+                        style={styles.limitBtn}
+                      >
+                        去个人配置绑定您的 API 密钥
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => router.push("/login")} 
+                        style={styles.limitBtnSecondary}
+                      >
+                        注册 / 登录正式账户
+                      </button>
+                    </div>
                   </div>
-                  <div style={styles.chatToolbar}>
+                ) : isBindKeyRequired ? (
+                  <div style={styles.limitBanner}>
+                    <p style={styles.limitText}>⚠️ 当前处于注册账户模式。为了保护服务额度，请先绑定您的 API 密钥以激活 AI 功能。</p>
                     <button 
                       type="button" 
-                      onClick={handleResetChat} 
-                      style={styles.btnResetChat}
+                      onClick={() => setActivePane("settings-pane")} 
+                      style={styles.limitBtn}
                     >
-                      重置本次对话
+                      去个人配置绑定 API 密钥
                     </button>
-                    <span style={styles.chatTip}>按 Enter 发送，Shift+Enter 换行</span>
                   </div>
-                </form>
+                ) : (
+                  <form onSubmit={handleSendMessage} style={styles.chatInputForm}>
+                    <div style={styles.chatInputWrapper}>
+                      <textarea
+                        value={chatMessage}
+                        onChange={(e) => setChatMessage(e.target.value)}
+                        placeholder="输入一句话日报，例如：今天完成了商用冰箱制冷芯片测试，解决了高低温漂移的问题..."
+                        rows={1}
+                        disabled={isGenerating}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendMessage(e);
+                          }
+                        }}
+                        style={styles.chatTextarea}
+                      />
+                      <button 
+                        type="submit" 
+                        disabled={isGenerating || !chatMessage.trim()} 
+                        style={chatMessage.trim() ? styles.btnSendActive : styles.btnSendDisabled}
+                      >
+                        <Send size={15} />
+                      </button>
+                    </div>
+                    <div style={styles.chatToolbar}>
+                      <button 
+                        type="button" 
+                        onClick={handleResetChat} 
+                        style={styles.btnResetChat}
+                      >
+                        重置本次对话
+                      </button>
+                      <span style={styles.chatTip}>按 Enter 发送，Shift+Enter 换行</span>
+                    </div>
+                  </form>
+                )}
               </div>
 
               {/* Right Column: Live STAR refinement preview */}
@@ -1917,5 +1970,55 @@ const styles = {
     fontSize: "11px",
     color: "#86868b",
     marginTop: "4px",
+  },
+  limitBanner: {
+    padding: "24px 20px",
+    borderRadius: "16px",
+    backgroundColor: "rgba(255, 59, 48, 0.04)",
+    border: "1px solid rgba(255, 59, 48, 0.08)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "14px",
+    textAlign: "center",
+    marginTop: "16px",
+    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.02)",
+  },
+  limitText: {
+    fontSize: "13px",
+    color: "#ff3b30",
+    fontWeight: 500,
+    lineHeight: "1.6",
+    margin: 0,
+  },
+  limitButtons: {
+    display: "flex",
+    gap: "10px",
+    width: "100%",
+    justifyContent: "center",
+    flexWrap: "wrap",
+  },
+  limitBtn: {
+    padding: "10px 18px",
+    borderRadius: "10px",
+    backgroundColor: "#0071e3",
+    color: "#ffffff",
+    fontSize: "13px",
+    fontWeight: 500,
+    border: "none",
+    cursor: "pointer",
+    transition: "background-color 0.2s ease",
+  },
+  limitBtnSecondary: {
+    padding: "10px 18px",
+    borderRadius: "10px",
+    backgroundColor: "#ffffff",
+    color: "#1d1d1f",
+    fontSize: "13px",
+    fontWeight: 500,
+    border: "1px solid #e8e8ed",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
   }
 };

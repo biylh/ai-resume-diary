@@ -1,8 +1,61 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { dbAuth } from "@/lib/db";
 
 export async function POST(req) {
   try {
     const { message, history, userProfile, customApiKey } = await req.json();
+
+    // 1. Get current logged-in user
+    const user = await dbAuth.getCurrentUser();
+    if (!user) {
+      return new Response(
+        JSON.stringify({ error: "未授权的会话，请先登录。" }), 
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // 2. Identify if user is guest
+    const isGuest = user.id.startsWith("guest-") || user.email === "guest@example.com" || !user.email;
+
+    // 3. Validation Logic
+    if (isGuest) {
+      // If guest does not have customApiKey, we enforce 3 times limit
+      if (!customApiKey || customApiKey.trim() === "") {
+        const chatCount = await dbAuth.getGuestChatCount(user.id);
+        if (chatCount >= 3) {
+          return new Response(
+            JSON.stringify({ 
+              error: "LIMIT_REACHED",
+              message: "访客模式体验额度已达上限（3次）。为了继续使用，请注册/登录，并在个人配置中绑定您自己的 Gemini API 密钥。" 
+            }), 
+            {
+              status: 403,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+        // Increment chat count for the guest
+        await dbAuth.incrementGuestChatCount(user.id);
+      }
+    } else {
+      // For registered users, we enforce customApiKey (they cannot use server key to prevent abuse)
+      if (!customApiKey || customApiKey.trim() === "") {
+        return new Response(
+          JSON.stringify({ 
+            error: "BIND_KEY_REQUIRED",
+            message: "当前为注册账户模式，请在【个人配置】中绑定并使用您自己的 Gemini API 密钥以继续使用。" 
+          }), 
+          {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+    }
+
     const apiKey = customApiKey || process.env.GEMINI_API_KEY;
     
     if (!apiKey || apiKey === "your_gemini_api_key_here") {
