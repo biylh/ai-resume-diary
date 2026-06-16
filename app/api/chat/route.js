@@ -47,8 +47,13 @@ export async function POST(req) {
     // Format history for Gemini SDK
     // Gemini expects structure: { role: 'user' | 'model', parts: [{ text: '...' }] }
     const formattedHistory = [];
-    if (history && history.length > 0) {
-      history.forEach((h) => {
+    
+    // Ensure history starts with a 'user' message, as Gemini SDK throws an error if it starts with 'model'
+    const firstUserIndex = (history || []).findIndex(h => h.role === "user");
+    const cleanHistory = firstUserIndex !== -1 ? history.slice(firstUserIndex) : [];
+
+    if (cleanHistory.length > 0) {
+      cleanHistory.forEach((h) => {
         formattedHistory.push({
           role: h.role === "user" ? "user" : "model",
           parts: [{ text: h.content }],
