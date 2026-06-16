@@ -18,10 +18,6 @@ export async function POST(req) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    
-    // We will use gemini-1.5-flash as the highly performant and stable model,
-    // which also works perfectly with system instructions.
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     // Dynamic System Prompt based on user profile
     const systemInstruction = `你现在是一位资深的职业发展导师与简历优化专家。你的任务是帮助用户深入挖掘他们每天的工作细节，并使用 STAR 原则（Situation 情境、Task 任务、Action 行动、Result 结果）提炼出高质量的简历话术。
@@ -44,6 +40,13 @@ export async function POST(req) {
 参与冰箱供应链轮岗，跟进冷藏室门板冲压工序。针对试制中板材良率偏低问题，主动排查定位销磨损瓶颈，协同车间技术员提出改用耐磨合金定位销的改进方案，使板材成型良率由 92% 提升至 98%，有效保障了新产品试制节点。
 [/STAR_RESUME]`;
 
+    // We will use gemini-1.5-flash as the highly performant and stable model.
+    // Standard practice for system instructions is to pass them inside getGenerativeModel config.
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      systemInstruction: systemInstruction
+    });
+
     // Format history for Gemini SDK
     // Gemini expects structure: { role: 'user' | 'model', parts: [{ text: '...' }] }
     const formattedHistory = [];
@@ -61,10 +64,9 @@ export async function POST(req) {
       });
     }
 
-    // We start a chat session with systemInstruction and history
+    // We start a chat session with history (systemInstruction is already configured on the model level)
     const chat = model.startChat({
       history: formattedHistory,
-      systemInstruction: systemInstruction,
     });
 
     const result = await chat.sendMessageStream(message);
