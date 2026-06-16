@@ -68,6 +68,12 @@ export default function HomePage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
   
+  // CDKey Activation State
+  const [activationCode, setActivationCode] = useState("");
+  const [isActivating, setIsActivating] = useState(false);
+  const [activationError, setActivationError] = useState("");
+  const [activationSuccess, setActivationSuccess] = useState("");
+  
   // Chat scroll anchor
   const messagesEndRef = useRef(null);
 
@@ -596,6 +602,47 @@ export default function HomePage() {
     }
   };
 
+  const handleActivate = async () => {
+    if (!activationCode.trim()) return;
+    setIsActivating(true);
+    setActivationError("");
+    setActivationSuccess("");
+
+    try {
+      const res = await fetch("/api/auth/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: activationCode.trim() })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "激活码验证失败");
+      }
+
+      setActivationSuccess("恭喜您，特权激活成功！已解锁免 Key 畅聊特权。");
+      
+      // Update local user state
+      const updatedUser = {
+        ...user,
+        is_activated: true
+      };
+      setUser(updatedUser);
+
+      // Save to localStorage if in localMode
+      if (isLocalMode) {
+        localStorage.setItem("local_user_profile", JSON.stringify(updatedUser));
+      }
+      
+      setActivationCode("");
+    } catch (err) {
+      console.error("Activation failed:", err);
+      setActivationError(err.message || "激活失败，请检查激活码输入是否正确。");
+    } finally {
+      setIsActivating(false);
+    }
+  };
+
   // Reset current chat session
   const handleResetChat = () => {
     setChatHistory([
@@ -673,9 +720,10 @@ export default function HomePage() {
 
   const isGuest = user && (user.id.startsWith("guest-") || user.email === "guest@example.com" || !user.email);
   const hasCustomKey = customApiKey && customApiKey.trim() !== "";
+  const isActivated = user?.is_activated === true;
   
-  const isLimitReached = isGuest && !hasCustomKey && (user?.chat_count || 0) >= 3;
-  const isBindKeyRequired = user && !isGuest && !hasCustomKey;
+  const isLimitReached = !isActivated && isGuest && !hasCustomKey && (user?.chat_count || 0) >= 3;
+  const isBindKeyRequired = !isActivated && user && !isGuest && !hasCustomKey;
 
   if (loadingSession) {
     return (
@@ -1278,6 +1326,75 @@ export default function HomePage() {
                       填入后将覆盖系统内置密钥。留空则自动使用服务器自带密钥。
                     </span>
                   </div>
+                </div>
+
+                <hr style={styles.divider} />
+
+                {/* CDKey Activation Section */}
+                <h3 style={styles.settingsSectionTitle}>🎁 专属激活通道 (免 Key 畅聊版)</h3>
+                <p style={styles.settingsDesc}>
+                  如果您已通过爱发电赞助支持了本项目，可以在此输入获得的激活码。激活后将自动解除提问次数限制，无需配置个人 API Key。
+                </p>
+
+                <div style={styles.apiKeySection}>
+                  <div style={styles.apiKeyStatus}>
+                    <Sparkles size={15} />
+                    <span>激活状态：</span>
+                    {user?.is_activated ? (
+                      <span style={styles.statusGreen}>🟢 已激活永久免 Key 畅聊特权</span>
+                    ) : (
+                      <span style={styles.statusYellow}>🟡 未激活免 Key 畅聊特权</span>
+                    )}
+                  </div>
+
+                  {!user?.is_activated && (
+                    <div style={{ marginTop: "12px" }}>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="输入激活码，格式如: RESUME-XXXX-XXXX"
+                          value={activationCode}
+                          onChange={(e) => {
+                            setActivationCode(e.target.value);
+                            setActivationError("");
+                          }}
+                          disabled={isActivating}
+                          style={{ flex: 1, textTransform: "uppercase" }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={handleActivate}
+                          disabled={isActivating || !activationCode.trim()}
+                          style={{ whiteSpace: "nowrap" }}
+                        >
+                          {isActivating ? "激活中..." : "立即激活"}
+                        </button>
+                      </div>
+                      {activationError && (
+                        <p style={{ color: "#ff3b30", fontSize: "13px", marginTop: "8px", display: "flex", alignItems: "center", gap: "4px" }}>
+                          ❌ {activationError}
+                        </p>
+                      )}
+                      {activationSuccess && (
+                        <p style={{ color: "#34c759", fontSize: "13px", marginTop: "8px", display: "flex", alignItems: "center", gap: "4px" }}>
+                          🎉 {activationSuccess}
+                        </p>
+                      )}
+                      <span style={styles.inputHelp}>
+                        还没有激活码？您可以前往{" "}
+                        <a 
+                          href="https://afdian.com" 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          style={{ color: "#0071e3", textDecoration: "underline", fontWeight: 500 }}
+                        >
+                          爱发电赞助支持并获取激活码
+                        </a>
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
