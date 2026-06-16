@@ -77,11 +77,32 @@ export default function HomePage() {
       try {
         const res = await fetch("/api/auth/session");
         const data = await res.json();
-        setIsLocalMode(!data.supabaseConfigured);
+        const localMode = !data.supabaseConfigured;
+        setIsLocalMode(localMode);
+        
         if (!data.authenticated) {
           router.push("/login");
         } else {
-          setUser(data.user);
+          let activeUser = data.user;
+          if (localMode) {
+            // Check if local storage has profile
+            const savedProfile = localStorage.getItem("local_user_profile");
+            if (savedProfile) {
+              try {
+                const parsedProfile = JSON.parse(savedProfile);
+                if (parsedProfile.id === data.user.id) {
+                  activeUser = parsedProfile;
+                } else {
+                  localStorage.setItem("local_user_profile", JSON.stringify(data.user));
+                }
+              } catch (e) {
+                localStorage.setItem("local_user_profile", JSON.stringify(data.user));
+              }
+            } else {
+              localStorage.setItem("local_user_profile", JSON.stringify(data.user));
+            }
+          }
+          setUser(activeUser);
         }
       } catch (err) {
         console.error("Session verification failed:", err);
@@ -129,12 +150,45 @@ export default function HomePage() {
   const fetchDiaries = async () => {
     setLoadingDiaries(true);
     try {
-      const res = await fetch("/api/diaries");
-      const data = await res.json();
-      if (res.ok) {
-        setDiaries(data.diaries || []);
-        // Automatically select all by default for resume synthesizer
-        setSelectedDiaryIds((data.diaries || []).map(d => d.id));
+      if (isLocalMode) {
+        const localData = localStorage.getItem("local_diaries");
+        let parsed = [];
+        try {
+          parsed = localData ? JSON.parse(localData) : [];
+        } catch (e) {
+          parsed = [];
+        }
+        
+        // Filter diaries for the current user id
+        const userDiaries = parsed.filter(d => d.user_id === user.id);
+        
+        if (userDiaries.length === 0) {
+          // If local storage is empty for this user, fetch from server (which has pre-installed template diary)
+          // and backup to local storage!
+          const res = await fetch("/api/diaries");
+          const data = await res.json();
+          if (res.ok && data.diaries) {
+            // Merge with existing local storage diaries of other users
+            const otherUsersDiaries = parsed.filter(d => d.user_id !== user.id);
+            const merged = [...data.diaries, ...otherUsersDiaries];
+            localStorage.setItem("local_diaries", JSON.stringify(merged));
+            setDiaries(data.diaries);
+            setSelectedDiaryIds(data.diaries.map(d => d.id));
+          } else {
+            setDiaries([]);
+            setSelectedDiaryIds([]);
+          }
+        } else {
+          setDiaries(userDiaries);
+          setSelectedDiaryIds(userDiaries.map(d => d.id));
+        }
+      } else {
+        const res = await fetch("/api/diaries");
+        const data = await res.json();
+        if (res.ok) {
+          setDiaries(data.diaries || []);
+          setSelectedDiaryIds((data.diaries || []).map(d => d.id));
+        }
       }
     } catch (err) {
       console.error("Failed to fetch diaries:", err);
@@ -217,7 +271,13 @@ export default function HomePage() {
       if (!res.ok) {
         const errData = await res.json();
         if (errData.error === "LIMIT_REACHED") {
-          setUser(prev => ({ ...prev, chat_count: 3 }));
+          setUser(prev => {
+            const updated = { ...prev, chat_count: 3 };
+            if (isLocalMode) {
+              localStorage.setItem("local_user_profile", JSON.stringify(updated));
+            }
+            return updated;
+          });
         }
         throw new Error(errData.message || errData.error || "请求 AI 接口失败");
       }
@@ -255,10 +315,16 @@ export default function HomePage() {
 
       // Update chat count locally for guest after successful stream completion
       if (isGuest && !hasCustomKey) {
-        setUser(prev => ({
-          ...prev,
-          chat_count: (prev?.chat_count || 0) + 1
-        }));
+        setUser(prev => {
+          const updated = {
+            ...prev,
+            chat_count: (prev?.chat_count || 0) + 1
+          };
+          if (isLocalMode) {
+            localStorage.setItem("local_user_profile", JSON.stringify(updated));
+          }
+          return updated;
+        });
       }
 
     } catch (err) {
@@ -278,6 +344,51 @@ export default function HomePage() {
 
     // Get the first user message as raw input for summary
     const firstUserMsg = chatHistory.find(h => h.role === "user")?.content || "今日日常记录";
+
+    if (isLocalMode) {
+      const newDiary = {
+        id: `diary-${Math.random().toString(36).substr(2, 9)}`,
+        user_id: user.id,
+        raw_input: firstUserMsg,
+        refined_bullet: currentRefinedBullet,
+        chat_history: chatHistory,
+        category: selectedCategory,
+        is_pinned: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      const localData = localStorage.getItem("local_diaries");
+      let diariesList = [];
+      try {
+        diariesList = localData ? JSON.parse(localData) : [];
+      } catch (e) {
+        diariesList = [];
+      }
+      diariesList.unshift(newDiary);
+      localStorage.setItem("local_diaries", JSON.stringify(diariesList));
+      
+      const userDiaries = diariesList.filter(d => d.user_id === user.id);
+      setDiaries(userDiaries);
+      setSelectedDiaryIds(userDiaries.map(d => d.id));
+      
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+
+      // Best-effort async backup to server
+      fetch("/api/diaries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rawInput: firstUserMsg,
+          refinedBullet: currentRefinedBullet,
+          chatHistory: chatHistory,
+          category: selectedCategory
+        })
+      }).catch(err => console.error("Async backup failed:", err));
+      
+      return;
+    }
 
     try {
       const res = await fetch("/api/diaries", {
@@ -306,6 +417,32 @@ export default function HomePage() {
 
   // Toggle pin/favorite
   const handleTogglePin = async (diary) => {
+    if (isLocalMode) {
+      const localData = localStorage.getItem("local_diaries");
+      let diariesList = [];
+      try {
+        diariesList = localData ? JSON.parse(localData) : [];
+      } catch (e) {
+        diariesList = [];
+      }
+      const idx = diariesList.findIndex(d => d.id === diary.id);
+      if (idx !== -1) {
+        diariesList[idx].is_pinned = !diariesList[idx].is_pinned;
+        localStorage.setItem("local_diaries", JSON.stringify(diariesList));
+        
+        const userDiaries = diariesList.filter(d => d.user_id === user.id);
+        setDiaries(userDiaries);
+      }
+      
+      // Async best-effort backup to server
+      fetch(`/api/diaries/${diary.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPinned: !diary.is_pinned })
+      }).catch(err => console.error("Async pin backup failed:", err));
+      return;
+    }
+
     try {
       const res = await fetch(`/api/diaries/${diary.id}`, {
         method: "PUT",
@@ -323,6 +460,28 @@ export default function HomePage() {
   // Delete diary entry
   const handleDeleteDiary = async (diaryId) => {
     if (!confirm("确定要删除这条记录吗？物理删除后不可恢复。")) return;
+
+    if (isLocalMode) {
+      const localData = localStorage.getItem("local_diaries");
+      let diariesList = [];
+      try {
+        diariesList = localData ? JSON.parse(localData) : [];
+      } catch (e) {
+        diariesList = [];
+      }
+      const updatedList = diariesList.filter(d => d.id !== diaryId);
+      localStorage.setItem("local_diaries", JSON.stringify(updatedList));
+      
+      const userDiaries = updatedList.filter(d => d.user_id === user.id);
+      setDiaries(userDiaries);
+      setSelectedDiaryIds(prev => prev.filter(id => id !== diaryId));
+      
+      // Async best-effort backup to server
+      fetch(`/api/diaries/${diaryId}`, { method: "DELETE" })
+        .catch(err => console.error("Async delete backup failed:", err));
+      return;
+    }
+
     try {
       const res = await fetch(`/api/diaries/${diaryId}`, { method: "DELETE" });
       if (res.ok) {
@@ -340,6 +499,34 @@ export default function HomePage() {
   };
 
   const handleSaveEdit = async (diaryId) => {
+    if (isLocalMode) {
+      const localData = localStorage.getItem("local_diaries");
+      let diariesList = [];
+      try {
+        diariesList = localData ? JSON.parse(localData) : [];
+      } catch (e) {
+        diariesList = [];
+      }
+      const idx = diariesList.findIndex(d => d.id === diaryId);
+      if (idx !== -1) {
+        diariesList[idx].refined_bullet = editingText;
+        diariesList[idx].updated_at = new Date().toISOString();
+        localStorage.setItem("local_diaries", JSON.stringify(diariesList));
+        
+        const userDiaries = diariesList.filter(d => d.user_id === user.id);
+        setDiaries(userDiaries);
+      }
+      setEditingDiaryId(null);
+      
+      // Async best-effort backup to server
+      fetch(`/api/diaries/${diaryId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refinedBullet: editingText })
+      }).catch(err => console.error("Async edit backup failed:", err));
+      return;
+    }
+
     try {
       const res = await fetch(`/api/diaries/${diaryId}`, {
         method: "PUT",
@@ -359,6 +546,34 @@ export default function HomePage() {
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     setProfileSaveSuccess(false);
+
+    if (isLocalMode) {
+      const updatedUser = {
+        ...user,
+        display_name: user.display_name,
+        industry: user.industry,
+        current_role: user.current_role,
+        target_role: user.target_role
+      };
+      localStorage.setItem("local_user_profile", JSON.stringify(updatedUser));
+      setUser(updatedUser);
+      setProfileSaveSuccess(true);
+      setTimeout(() => setProfileSaveSuccess(false), 2000);
+      
+      // Async best-effort backup to server
+      fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: user.display_name,
+          industry: user.industry,
+          currentRole: user.current_role,
+          targetRole: user.target_role
+        })
+      }).catch(err => console.error("Async profile backup failed:", err));
+      return;
+    }
+
     try {
       const res = await fetch("/api/profile", {
         method: "PUT",
