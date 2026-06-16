@@ -72,6 +72,26 @@ export default function LoginPage() {
     }
   };
 
+  const handleGuestLogin = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/guest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "请求失败，请稍后重试");
+      }
+      router.push("/");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (checkingSession) {
     return (
       <div style={styles.loadingContainer}>
@@ -215,6 +235,16 @@ export default function LoginPage() {
 
           <button type="submit" disabled={loading} style={styles.submitBtn}>
             {loading ? "处理中..." : isLogin ? "登录" : "注册并初始化"}
+          </button>
+
+          <button 
+            type="button" 
+            disabled={loading} 
+            onClick={handleGuestLogin} 
+            style={styles.guestBtn}
+          >
+            <Sparkles size={16} style={{ flexShrink: 0 }} />
+            <span>以访客身份免登录体验</span>
           </button>
         </form>
 
@@ -391,6 +421,22 @@ const styles = {
     border: "none",
     cursor: "pointer",
     transition: "background-color 0.2s ease",
+  },
+  guestBtn: {
+    marginTop: "4px",
+    padding: "12px",
+    borderRadius: "10px",
+    backgroundColor: "rgba(0, 113, 227, 0.08)",
+    color: "#0071e3",
+    fontSize: "14px",
+    fontWeight: 500,
+    border: "1px solid rgba(0, 113, 227, 0.2)",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
   },
   footer: {
     marginTop: "20px",
